@@ -8,7 +8,7 @@ Selective contrastive post-training for hallucination mitigation in LLMs — imp
 <img width="675" height="330" alt="Image" src="https://github.com/user-attachments/assets/67335ee3-468b-48fe-abdb-f588a2040eaf" />
 
 ### How to run ###
-
+0) `git clone https://github.com/genji970/hallucination-mitigation-via-contrastive-sampling-method`
 1) `pip install -r requirements.txt`
 2) `chmod +x run_sft_and_new_1000.sh \ HF_TOKEN=hf_xxx ./run_sft_and_new_1000.sh`
   You must insert your own HF_TOKEN from Huggingface
