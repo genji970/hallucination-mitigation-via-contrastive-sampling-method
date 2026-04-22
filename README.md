@@ -66,6 +66,10 @@ The figure shows the change in the number of hallucinated samples compared to th
 
 <img width="675" height="330" alt="Image" src="https://github.com/user-attachments/assets/67335ee3-468b-48fe-abdb-f588a2040eaf" />
 
+### Perplexity test
+<img width="671" height="120" alt="Image" src="https://github.com/user-attachments/assets/f94059e5-b9dd-46d0-b08e-488529021adb" />
+Can see ours does not degrade compared to baseline.
+
 ### How to run ###
 0) `git clone https://github.com/genji970/hallucination-mitigation-via-contrastive-sampling-method`
 1) `pip install -r requirements.txt`
