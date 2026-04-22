@@ -22,28 +22,4 @@ Instead of uniformly fine-tuning the model, we **selectively update the model on
 
 ## 🔁 Core Pipeline
 
-Question + Reference Answer
-│
-▼
-Base Model (frozen)
-│
-├──► Generate Incorrect Answer (bad branch)
-│
-▼
-Construct Pair:
-(gold answer, bad answer)
-│
-▼
-Adapted Model (trainable)
-│
-├──► Score gold continuation
-├──► Score bad continuation
-│
-▼
-Selective Update Condition
-│
-├── If bad is NOT sufficiently suppressed:
-│ → Apply contrastive update
-│
-└── Else:
-→ Skip (no update)
+<img width="362" height="649" alt="Image" src="https://github.com/user-attachments/assets/e9d294c5-8d88-4853-b41a-2f982f252276" />
