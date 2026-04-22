@@ -1,8 +1,6 @@
 # hallucination-mitigation-via-contrastive-sampling-method
 Selective contrastive post-training for hallucination mitigation in LLMs — improves factuality with ~10% data.
 
-<img width="650" height="347" alt="Image" src="https://github.com/user-attachments/assets/0feea2dd-bbfd-4b5c-990b-102a12595dfc" />
-
 ## Experimental Results
 
 ### (a) DPO vs. Ours
@@ -20,7 +18,7 @@ This table compares our method against DPO across multiple benchmarks.
 
 👉 This shows that **selective contrastive training is more effective than full preference optimization (DPO)**.
 
-<img width="608" height="380" alt="Image" src="https://github.com/user-attachments/assets/96bd8473-d25e-4747-bc90-7a95afcc927f" />
+<img width="650" height="347" alt="Image" src="https://github.com/user-attachments/assets/0feea2dd-bbfd-4b5c-990b-102a12595dfc" />
 
 ### (b) SFT (CE loss only) vs. Ours
 
@@ -50,7 +48,7 @@ Columns:
 
 👉 This confirms that **selective training focuses on hallucination-critical cases and avoids unnecessary updates**.
 
-<img width="675" height="330" alt="Image" src="https://github.com/user-attachments/assets/67335ee3-468b-48fe-abdb-f588a2040eaf" />
+<img width="608" height="380" alt="Image" src="https://github.com/user-attachments/assets/96bd8473-d25e-4747-bc90-7a95afcc927f" />
 
 ### Net Reduction in Hallucinated Samples
 
@@ -65,6 +63,8 @@ The figure shows the change in the number of hallucinated samples compared to th
 - The largest gains are observed on more complex tasks (e.g., HaluEval dialogue).
 
 👉 This highlights that **our method provides more reliable and consistent hallucination reduction than standard training**.
+
+<img width="675" height="330" alt="Image" src="https://github.com/user-attachments/assets/67335ee3-468b-48fe-abdb-f588a2040eaf" />
 
 ### How to run ###
 0) `git clone https://github.com/genji970/hallucination-mitigation-via-contrastive-sampling-method`
