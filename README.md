@@ -13,3 +13,37 @@ Selective contrastive post-training for hallucination mitigation in LLMs — imp
 2) `chmod +x run_sft_and_new_1000.sh \ HF_TOKEN=hf_xxx ./run_sft_and_new_1000.sh`
   You must insert your own HF_TOKEN from Huggingface
 
+### Method ###
+# Selective Contrastive Post-Training
+
+We propose a **selective contrastive training framework** that treats hallucination as a **preference misalignment problem**.
+
+Instead of uniformly fine-tuning the model, we **selectively update the model only when it over-supports incorrect continuations relative to correct ones**.
+
+## 🔁 Core Pipeline
+
+Question + Reference Answer
+│
+▼
+Base Model (frozen)
+│
+├──► Generate Incorrect Answer (bad branch)
+│
+▼
+Construct Pair:
+(gold answer, bad answer)
+│
+▼
+Adapted Model (trainable)
+│
+├──► Score gold continuation
+├──► Score bad continuation
+│
+▼
+Selective Update Condition
+│
+├── If bad is NOT sufficiently suppressed:
+│ → Apply contrastive update
+│
+└── Else:
+→ Skip (no update)
