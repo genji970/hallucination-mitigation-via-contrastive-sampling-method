@@ -86,3 +86,15 @@ Instead of uniformly fine-tuning the model, we **selectively update the model on
 ## 🔁 Core Pipeline
 
 <img width="362" height="649" alt="Image" src="https://github.com/user-attachments/assets/e9d294c5-8d88-4853-b41a-2f982f252276" />
+
+## acknowledgement
+
+qwen2.5-7b-instruct and 5 public dataset have been used.
+truthfulqa/truthful_qa
+hotpotqa/hotpot_qa
+ucinlp/drop
+pminervini/HaluEval
+
+
+
+
