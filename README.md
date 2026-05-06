@@ -64,11 +64,6 @@ This table evaluates whether our method preserves general language modeling qual
 - On **WikiText-2**, perplexity changes from **11.50 → 11.49**.
 - On **LAMBADA**, perplexity changes from **24.41 → 24.39**.
 - Lower perplexity is better, so our method does not degrade general language modeling ability.
-
-This indicates that hallucination reduction is not achieved by damaging the base model’s fluency or next-token prediction quality.
-
-<img width="" height="" alt="Perplexity comparison table" src="" />
-
 ---
 
 ### Ablation Study: Selective Gating
