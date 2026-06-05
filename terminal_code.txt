@@ -1,0 +1,14 @@
+pip install -r requirements.txt
+
+pip uninstall -y torch torchvision torchaudio xformers
+
+pip install --no-cache-dir \
+  torch==2.7.1 \
+  torchvision==0.22.1 \
+  torchaudio==2.7.1 \
+  --index-url https://download.pytorch.org/whl/cu128
+
+chmod +x run_sft_and_new_1000.sh
+HF_TOKEN=hf_xx ./run_sft_and_new_1000.sh
+
+

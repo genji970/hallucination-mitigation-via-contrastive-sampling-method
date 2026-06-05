@@ -1,0 +1,9 @@
+torch
+transformers
+accelerate
+datasets
+bitsandbytes
+huggingface_hub
+matplotlib
+trl==0.8.4
+huggingface_hub
