@@ -579,7 +579,7 @@ class HallucinationTrainer:
 
         loss = (
             float(self.args.method_sft_coef) * float(balance_scales["ce"]) * ce_base_loss
-            + float(self.args.method_conf_coef) * float(balance_scales["conf"]) * conf_loss
+            - float(self.args.method_conf_coef) * float(balance_scales["conf"]) * conf_loss
         )
 
         def weighted_mean(key: str):
@@ -596,7 +596,7 @@ class HallucinationTrainer:
             "ce_base_loss": torch.tensor(ce_base_loss, device=device),
             "conf_loss": torch.tensor(conf_loss, device=device),
             "ce_contrib": torch.tensor(float(self.args.method_sft_coef) * float(balance_scales["ce"]) * ce_base_loss, device=device),
-            "conf_contrib": torch.tensor(float(self.args.method_conf_coef) * float(balance_scales["conf"]) * conf_loss, device=device),
+            "conf_contrib": torch.tensor(-float(self.args.method_conf_coef) * float(balance_scales["conf"]) * conf_loss, device=device),
             "raw_mag_mean": torch.tensor(weighted_mean("raw_mag_mean"), device=device),
             "mag_mean": torch.tensor(weighted_mean("mag_mean"), device=device),
             "mag_pos_mean": torch.tensor(weighted_mean("mag_pos_mean"), device=device),
@@ -676,7 +676,7 @@ class HallucinationTrainer:
             if window_norm["ce"] > 0.0 and float(self.args.method_sft_coef) != 0.0:
                 eff_ce = float(self.args.method_sft_coef) * float(balance_scales["ce"]) * sample_ce_num / max(window_norm["ce"], 1e-8)
             if window_norm["conf"] > 0.0 and float(self.args.method_conf_coef) != 0.0:
-                eff_conf = float(self.args.method_conf_coef) * float(balance_scales["conf"]) * sample_conf_num / max(window_norm["conf"], 1e-8)
+                eff_conf = -float(self.args.method_conf_coef) * float(balance_scales["conf"]) * sample_conf_num / max(window_norm["conf"], 1e-8)
 
             prompt_token_count = int(batch["prompt_attention_mask"][j].sum().item()) if torch.is_tensor(batch["prompt_attention_mask"]) else int(batch["prompt_used_len"][j])
             gold_token_count = int((batch["gold_labels"][j] != -100).sum().item()) if torch.is_tensor(batch["gold_labels"]) else int(batch["gold_answer_used_len"][j])
@@ -1023,6 +1023,7 @@ class HallucinationTrainer:
                             * loss_dict["conf_num"]
                             / max(window_norm["conf"], 1e-8)
                         )
+                        term = -term
                         conf_term_value = float(term.detach().float().item())
                         batch_loss = term if batch_loss is None else batch_loss + term
 

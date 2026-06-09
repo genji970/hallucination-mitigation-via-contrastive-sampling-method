@@ -97,7 +97,7 @@ class FormulaHallucinationObjective(nn.Module):
             f"hidden_size={self.hidden_size}",
             f"trainable_rows={int(self.row_mask.sum().item())}/{self.hidden_size}",
             f"train_pipeline={getattr(self.args, 'train_pipeline', 'new_method')}",
-            f"formula=conditional_norm(CE, CONF) with base-generated bad answers + divergence-to-end probability margin | match_mode={self.args.match_mode}",
+            f"formula=contrastive CE = gold_answer_ce - base_hallucinated_answer_ce | span={getattr(self.args, 'method_contrastive_span', 'full')} | match_mode={self.args.match_mode}",
         ]
         for row in self.row_mask_summary:
             lines.append(f"{row['module_name']}: active_rows={row['active_rows']}/{row['out_dim']}")
@@ -339,13 +339,13 @@ class FormulaHallucinationObjective(nn.Module):
             return n
         return 0
 
-    def slice_from_divergence(self, values: torch.Tensor, start: int):
+    def ce_from_index(self, values: torch.Tensor, start: int) -> torch.Tensor:
         if values.numel() == 0:
             return values.new_zeros((0,))
         start = max(0, min(int(start), max(values.shape[0] - 1, 0)))
         return values[start:]
 
-    def safe_mean(self, values: torch.Tensor):
+    def safe_mean(self, values: torch.Tensor) -> torch.Tensor:
         return values.mean() if values.numel() > 0 else values.new_tensor(0.0)
 
     def _match_cache_key(self, question: Any, gold: Any, pred: Any) -> str:
@@ -517,20 +517,6 @@ class FormulaHallucinationObjective(nn.Module):
 
         return [x if x is not None else self._rule_match_record(q, g, p, status="final_fallback") for x, q, g, p in zip(out, questions, gold_answers, pred_answers)]
 
-    def activation(self, x: torch.Tensor):
-        kind = str(getattr(self.args, "method_activation", "relu")).lower().strip()
-        beta = float(getattr(self.args, "method_activation_beta", 1.0))
-        if kind == "relu":
-            return F.relu(x)
-        if kind == "sigmoid":
-            return torch.sigmoid(beta * x)
-        return F.softplus(beta * x) / max(beta, 1e-8)
-
-    def bounded_gate(self, deficit: torch.Tensor):
-        act = self.activation(deficit)
-        c = max(float(getattr(self.args, "method_gate_scale", 1.0)), 1e-8)
-        return act / (act + act.new_tensor(c))
-
     def _scalar(self, value: torch.Tensor | float | int) -> float:
         if isinstance(value, torch.Tensor):
             return float(value.detach().float().item())
@@ -661,15 +647,11 @@ class FormulaHallucinationObjective(nn.Module):
         batch_size = len(batch["answer"])
         match_records = self.semantic_match_answers(batch["question"], batch["answer"], base_answers)
         base_mismatch_mask = []
-        divergence_indices = []
         for i in range(batch_size):
             base_mismatch = not bool(match_records[i].get("match_same", False))
             base_mismatch_mask.append(base_mismatch)
-            divergence_indices.append(
-                int(self.first_divergence_index(batch["gold_answer_token_ids"][i], base_answer_token_ids[i])) if base_mismatch else 0
-            )
 
-        need_bad_branch = any(base_mismatch_mask) and float(self.args.method_conf_coef) != 0.0
+        need_bad_branch = any(base_mismatch_mask)
 
         gold_outputs = self.model(
             input_ids=batch["gold_input_ids"],
@@ -697,24 +679,19 @@ class FormulaHallucinationObjective(nn.Module):
             bad_token_ce = [gold_seq_ce.new_zeros((0,)) for _ in range(batch_size)]
             bad_seq_ce = gold_seq_ce.new_zeros((batch_size,))
 
-        raw_margin_vals = []
-        act_vals = []
-        margin_pos_vals = []
-        margin_neg_vals = []
-        divergence_ce_gold_vals = []
-        divergence_ce_bad_vals = []
-        deficit_vals = []
-        conf_vals = []
+        contrastive_span = str(getattr(self.args, "method_contrastive_span", "full")).lower().strip()
+        if contrastive_span not in {"full", "divergence"}:
+            raise ValueError(f"Unsupported method_contrastive_span: {contrastive_span}")
+
         halluci_mask = []
-        ce_weights = []
-        conf_num_pieces = []
+        selected_mask = []
+        divergence_indices = []
+        contrast_margin_vals = []
+        loss_margin_vals = []
         ce_num_pieces = []
+        hall_ce_num_pieces = []
         ce_denom = gold_seq_ce.new_tensor(0.0)
         conf_denom = gold_seq_ce.new_tensor(0.0)
-
-        prob_margin_target = float(getattr(self.args, "method_prob_margin_target", 0.0))
-        bad_ce_target = float(getattr(self.args, "method_bad_ce_target", 2.0))
-        halluci_margin_threshold = float(getattr(self.args, "method_halluci_margin_threshold", 0.0))
 
         sample_metrics = []
         sample_ce_num_vals = []
@@ -726,66 +703,43 @@ class FormulaHallucinationObjective(nn.Module):
         for i in range(batch_size):
             zero = gold_seq_ce.new_tensor(0.0)
             base_mismatch = base_mismatch_mask[i]
-            if base_mismatch and need_bad_branch:
-                div_idx = divergence_indices[i]
-                gold_divergence_ce = self.slice_from_divergence(gold_token_ce[i], div_idx)
-                bad_divergence_ce = self.slice_from_divergence(bad_token_ce[i], div_idx)
-                gold_divergence_ce_mean = self.safe_mean(gold_divergence_ce)
-                bad_divergence_ce_mean = self.safe_mean(bad_divergence_ce)
-                prob_margin = bad_divergence_ce_mean - gold_divergence_ce_mean
-                active_halluci = bool(float(prob_margin.item()) < halluci_margin_threshold)
-                deficit = F.relu(gold_seq_ce.new_tensor(prob_margin_target) - prob_margin)
-                gate = self.bounded_gate(deficit) if active_halluci else zero
-                bad_term = F.relu(gold_seq_ce.new_tensor(bad_ce_target) - bad_divergence_ce_mean) / max(bad_ce_target, 1e-8)
-                bad_term = bad_term.clamp(min=0.0, max=1.0)
-                conf = gate * bad_term if active_halluci else zero
-            else:
-                gold_divergence_ce = gold_seq_ce.new_zeros((0,))
-                bad_divergence_ce = gold_seq_ce.new_zeros((0,))
-                gold_divergence_ce_mean = zero
-                bad_divergence_ce_mean = zero
-                prob_margin = zero
-                deficit = zero
-                gate = zero
-                bad_term = zero
-                conf = zero
-                active_halluci = False
+            active_halluci = bool(base_mismatch)
+            selected = bool(active_halluci and getattr(self.args, "train_use_halluci", True))
+
+            div_idx = 0
+            if active_halluci and contrastive_span == "divergence":
+                div_idx = self.first_divergence_index(batch["gold_answer_token_ids"][i], base_answer_token_ids[i])
+            gold_span_ce = self.ce_from_index(gold_token_ce[i], div_idx) if active_halluci else gold_seq_ce.new_zeros((0,))
+            bad_span_ce = self.ce_from_index(bad_token_ce[i], div_idx) if active_halluci else gold_seq_ce.new_zeros((0,))
+            gold_span_ce_mean = self.safe_mean(gold_span_ce) if selected else zero
+            bad_span_ce_mean = self.safe_mean(bad_span_ce) if selected else zero
+            sample_ce_num = gold_span_ce_mean
+            sample_conf_num = bad_span_ce_mean
+            hall_ce = bad_span_ce_mean
+            contrast_margin = bad_span_ce_mean - gold_span_ce_mean if active_halluci else zero
+            loss_margin = gold_span_ce_mean - bad_span_ce_mean if active_halluci else zero
 
             halluci_mask.append(active_halluci)
-            selected = (active_halluci and self.args.train_use_halluci) or ((not active_halluci) and self.args.train_use_clean)
-            ce_weight = (
-                self.args.train_halluci_ce_weight if (active_halluci and selected)
-                else (self.args.train_clean_ce_weight if selected else 0.0)
-            )
-            ce_weights.append(ce_weight)
-            sample_ce_num = gold_seq_ce[i] * float(ce_weight) if ce_weight > 0.0 else zero
-            sample_conf_num = conf if active_halluci else zero
+            selected_mask.append(selected)
+            divergence_indices.append(div_idx)
             sample_ce_num_vals.append(sample_ce_num)
             sample_conf_num_vals.append(sample_conf_num)
-            used_ce = bool(ce_weight > 0.0)
-            used_conf = bool(active_halluci and float(self.args.method_conf_coef) != 0.0)
+            used_ce = bool(selected)
+            used_conf = bool(selected)
             used_union = bool(used_ce or used_conf)
             if used_ce:
                 used_ce_count += 1
                 ce_num_pieces.append(sample_ce_num)
-                ce_denom = ce_denom + gold_seq_ce.new_tensor(float(ce_weight))
+                ce_denom = ce_denom + gold_seq_ce.new_tensor(1.0)
             if used_conf:
                 used_conf_count += 1
+                hall_ce_num_pieces.append(sample_conf_num)
+                conf_denom = conf_denom + gold_seq_ce.new_tensor(1.0)
             if used_union:
                 used_union_count += 1
 
-            raw_margin_vals.append(prob_margin)
-            act_vals.append(gate)
-            margin_pos_vals.append(F.relu(prob_margin))
-            margin_neg_vals.append(F.relu(-prob_margin))
-            divergence_ce_gold_vals.append(gold_divergence_ce_mean)
-            divergence_ce_bad_vals.append(bad_divergence_ce_mean)
-            deficit_vals.append(deficit)
-            conf_vals.append(conf)
-
-            if active_halluci:
-                conf_num_pieces.append(conf)
-                conf_denom = conf_denom + gold_seq_ce.new_tensor(1.0)
+            contrast_margin_vals.append(contrast_margin)
+            loss_margin_vals.append(loss_margin)
 
             sample_metrics.append({
                 "sample_index": int(i),
@@ -797,26 +751,29 @@ class FormulaHallucinationObjective(nn.Module):
                 "match_raw_output": str(match_records[i].get("match_raw_output", "")),
                 "match_prompt_text": str(match_records[i].get("match_prompt_text", "")),
                 "need_bad_branch": bool(need_bad_branch),
-                "divergence_index": int(divergence_indices[i]),
+                "contrastive_span": contrastive_span,
+                "divergence_index": int(div_idx),
                 "gold_seq_ce": self._scalar(gold_seq_ce[i]),
                 "bad_seq_ce": self._scalar(bad_seq_ce[i]),
                 "gold_token_ce": self._vector(gold_token_ce[i]),
                 "bad_token_ce": self._vector(bad_token_ce[i]),
-                "gold_divergence_ce": self._vector(gold_divergence_ce),
-                "bad_divergence_ce": self._vector(bad_divergence_ce),
-                "gold_divergence_ce_mean": self._scalar(gold_divergence_ce_mean),
-                "bad_divergence_ce_mean": self._scalar(bad_divergence_ce_mean),
-                "prob_margin": self._scalar(prob_margin),
-                "prob_margin_target": float(prob_margin_target),
-                "halluci_margin_threshold": float(halluci_margin_threshold),
-                "bad_ce_target": float(bad_ce_target),
-                "deficit": self._scalar(deficit),
-                "gate": self._scalar(gate),
-                "bad_term": self._scalar(bad_term),
-                "conf": self._scalar(conf),
+                "gold_divergence_ce": self._vector(gold_span_ce),
+                "bad_divergence_ce": self._vector(bad_span_ce),
+                "gold_divergence_ce_mean": self._scalar(gold_span_ce_mean),
+                "bad_divergence_ce_mean": self._scalar(bad_span_ce_mean),
+                "prob_margin": self._scalar(contrast_margin),
+                "prob_margin_target": 0.0,
+                "halluci_margin_threshold": 0.0,
+                "bad_ce_target": 0.0,
+                "deficit": 0.0,
+                "gate": 1.0 if selected else 0.0,
+                "bad_term": self._scalar(hall_ce),
+                "conf": self._scalar(hall_ce),
+                "contrastive_loss": self._scalar(loss_margin),
+                "hallucinated_answer": "" if i >= len(base_answers) else str(base_answers[i]),
                 "active_halluci": bool(active_halluci),
                 "selected": bool(selected),
-                "ce_weight": float(ce_weight),
+                "ce_weight": 1.0 if selected else 0.0,
                 "sample_ce_num": self._scalar(sample_ce_num),
                 "sample_conf_num": self._scalar(sample_conf_num),
                 "used_ce": bool(used_ce),
@@ -824,26 +781,20 @@ class FormulaHallucinationObjective(nn.Module):
                 "used_union": bool(used_union),
             })
 
-        raw_margin_t = torch.stack(raw_margin_vals) if raw_margin_vals else gold_seq_ce.new_zeros((0,))
-        act_t = torch.stack(act_vals) if act_vals else gold_seq_ce.new_zeros((0,))
-        margin_pos_t = torch.stack(margin_pos_vals) if margin_pos_vals else gold_seq_ce.new_zeros((0,))
-        margin_neg_t = torch.stack(margin_neg_vals) if margin_neg_vals else gold_seq_ce.new_zeros((0,))
-        divergence_ce_gold_t = torch.stack(divergence_ce_gold_vals) if divergence_ce_gold_vals else gold_seq_ce.new_zeros((0,))
-        divergence_ce_bad_t = torch.stack(divergence_ce_bad_vals) if divergence_ce_bad_vals else gold_seq_ce.new_zeros((0,))
-        deficit_t = torch.stack(deficit_vals) if deficit_vals else gold_seq_ce.new_zeros((0,))
-        conf_t = torch.stack(conf_vals) if conf_vals else gold_seq_ce.new_zeros((0,))
+        contrast_margin_t = torch.stack(contrast_margin_vals) if contrast_margin_vals else gold_seq_ce.new_zeros((0,))
+        loss_margin_t = torch.stack(loss_margin_vals) if loss_margin_vals else gold_seq_ce.new_zeros((0,))
         sample_ce_num_t = torch.stack(sample_ce_num_vals) if sample_ce_num_vals else gold_seq_ce.new_zeros((0,))
         sample_conf_num_t = torch.stack(sample_conf_num_vals) if sample_conf_num_vals else gold_seq_ce.new_zeros((0,))
 
         ce_num = torch.stack(ce_num_pieces).sum() if ce_num_pieces else gold_seq_ce.new_tensor(0.0)
-        conf_num = torch.stack(conf_num_pieces).sum() if conf_num_pieces else gold_seq_ce.new_tensor(0.0)
+        conf_num = torch.stack(hall_ce_num_pieces).sum() if hall_ce_num_pieces else gold_seq_ce.new_tensor(0.0)
 
         ce_base_loss = ce_num / ce_denom.clamp_min(1e-8) if float(ce_denom.item()) > 0.0 else gold_seq_ce.new_tensor(0.0)
         conf_loss = conf_num / conf_denom.clamp_min(1e-8) if float(conf_denom.item()) > 0.0 else gold_seq_ce.new_tensor(0.0)
 
         total_loss = (
             float(self.args.method_sft_coef) * ce_base_loss
-            + float(self.args.method_conf_coef) * conf_loss
+            - float(self.args.method_conf_coef) * conf_loss
         )
 
         has_train_signal = bool(float(ce_denom.item()) > 0.0 or float(conf_denom.item()) > 0.0)
@@ -853,20 +804,20 @@ class FormulaHallucinationObjective(nn.Module):
             "conf_loss": conf_loss,
             "gold_seq_ce_mean": gold_seq_ce.mean() if gold_seq_ce.numel() > 0 else total_loss.new_tensor(0.0),
             "bad_seq_ce_mean": bad_seq_ce.mean() if bad_seq_ce.numel() > 0 else total_loss.new_tensor(0.0),
-            "raw_mag_mean": raw_margin_t.mean() if raw_margin_t.numel() > 0 else total_loss.new_tensor(0.0),
-            "mag_mean": act_t.mean() if act_t.numel() > 0 else total_loss.new_tensor(0.0),
-            "mag_pos_mean": margin_pos_t.mean() if margin_pos_t.numel() > 0 else total_loss.new_tensor(0.0),
-            "mag_neg_mean": margin_neg_t.mean() if margin_neg_t.numel() > 0 else total_loss.new_tensor(0.0),
-            "divergence_ce_gold_mean": divergence_ce_gold_t.mean() if divergence_ce_gold_t.numel() > 0 else total_loss.new_tensor(0.0),
-            "divergence_ce_bad_mean": divergence_ce_bad_t.mean() if divergence_ce_bad_t.numel() > 0 else total_loss.new_tensor(0.0),
-            "rank_loss_mean": deficit_t.mean() if deficit_t.numel() > 0 else total_loss.new_tensor(0.0),
+            "raw_mag_mean": contrast_margin_t.mean() if contrast_margin_t.numel() > 0 else total_loss.new_tensor(0.0),
+            "mag_mean": loss_margin_t.mean() if loss_margin_t.numel() > 0 else total_loss.new_tensor(0.0),
+            "mag_pos_mean": F.relu(contrast_margin_t).mean() if contrast_margin_t.numel() > 0 else total_loss.new_tensor(0.0),
+            "mag_neg_mean": F.relu(-contrast_margin_t).mean() if contrast_margin_t.numel() > 0 else total_loss.new_tensor(0.0),
+            "divergence_ce_gold_mean": ce_base_loss,
+            "divergence_ce_bad_mean": conf_loss,
+            "rank_loss_mean": loss_margin_t.mean() if loss_margin_t.numel() > 0 else total_loss.new_tensor(0.0),
             "ce_contrib": float(self.args.method_sft_coef) * ce_base_loss,
-            "conf_contrib": float(self.args.method_conf_coef) * conf_loss,
+            "conf_contrib": -float(self.args.method_conf_coef) * conf_loss,
             "scale_ce": 1.0,
             "scale_conf": 1.0,
             "num_halluci": int(sum(halluci_mask)),
             "num_clean": int(batch_size - sum(halluci_mask)),
-            "num_selected": int(sum(1 for w in ce_weights if w > 0.0)),
+            "num_selected": int(used_union_count),
             "num_used_ce": int(used_ce_count),
             "num_used_conf": int(used_conf_count),
             "num_used_union": int(used_union_count),
@@ -879,7 +830,7 @@ class FormulaHallucinationObjective(nn.Module):
             "divergence_indices": divergence_indices,
             "base_answers": list(base_answers),
             "match_records": match_records,
-            "ce_weights": ce_weights,
+            "ce_weights": [1.0 if v else 0.0 for v in selected_mask],
             "has_train_signal": has_train_signal,
             "ce_num": ce_num,
             "ce_denom": ce_denom,
