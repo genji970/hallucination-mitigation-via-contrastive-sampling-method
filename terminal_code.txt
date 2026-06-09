@@ -11,11 +11,8 @@ pip install --no-cache-dir \
 chmod +x run_sft_and_new_1000.sh
 HF_TOKEN=hf_xx ./run_sft_and_new_1000.sh
 
-<<<<<<< HEAD
 chmod +x ablation.sh
 HF_TOKEN=xx ./ablation.sh
 
-=======
->>>>>>> parent of 6d2bf68 (update)
 
 
