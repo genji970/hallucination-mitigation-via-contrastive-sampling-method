@@ -105,7 +105,6 @@ def parse_args():
     p.add_argument("--method_activation_beta", type=float, default=1.0)
     p.add_argument("--method_halluci_margin_threshold", type=float, default=0.0)
     p.add_argument("--method_use_full_seq", type=str2bool, default=False)
-    p.add_argument("--method_contrastive_span", type=str, default="full", choices=["full", "divergence"])
     p.add_argument("--method_gate_scale", type=float, default=1.0)
     p.add_argument("--method_accum_balance", type=str2bool, default=False)
     p.add_argument("--method_balance_ce_target", type=float, default=1.0)
@@ -152,12 +151,8 @@ def parse_args():
         args.method_sft_coef = 1.0
         args.method_conf_coef = 0.0
         args.method_accum_balance = False
-    elif not args.train_use_halluci:
-        raise ValueError("new_method contrastive training requires --train_use_halluci true.")
-    else:
-        args.method_sft_coef = 1.0
-        args.method_conf_coef = 1.0
-        args.method_accum_balance = False
+    elif not args.train_use_clean and not args.train_use_halluci:
+        raise ValueError("At least one of --train_use_clean or --train_use_halluci must be true for new_method.")
 
     mode_subdir = "sft_only" if args.train_pipeline == "sft_only" else "new_method"
     default_run_name = mode_subdir

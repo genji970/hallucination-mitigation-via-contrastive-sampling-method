@@ -46,8 +46,8 @@ COMMON_ARGS=(
   --sample_trace_text_max_chars 4000
   --push_to_hub true
   --early_stop_step 100
-  --eval_dataset_names drop,faitheval_inconsistent,halueval_dialogue,halueval_summarization,hotpotqa_fullwiki
-  --eval_dataset_splits validation,test,data,data,validation,validation
+  --eval_dataset_names faitheval_inconsistent,halueval_dialogue,halueval_summarization,drop,hotpotqa_fullwiki
+  --eval_dataset_splits test,data,data,validation,validation
 )
 
 LAYER_IDXS=(14 15 16 17 18 19 20)
@@ -61,7 +61,7 @@ for LAYER in "${LAYER_IDXS[@]}"; do
       for HM_THR in "${HALLUCI_THRESHOLDS[@]}"; do
         python main.py "${COMMON_ARGS[@]}" \
           --trainable_target_layer_idx "${LAYER}" \
-          --hub_repo_id "changgyu/best_trustworthy_model_layer${LAYER}" \
+          --hub_repo_id "xxx" \
           --run_name "halueval_llm_match_new_1000_layer${LAYER}_badce_${BAD_CE}_pm_${PM_TGT}_hm_${HM_THR}" \
           --train_pipeline new_method \
           --method_sft_coef 0.0 \
